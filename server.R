@@ -1,10 +1,10 @@
 library(shiny)
 library(dplyr)
-library(tigris)
 library(leaflet)
 library(rgeos)
 library(readxl)
 library(sp)
+library(rgdal)
 
 #importing data 
 MVA_DATA <- read_excel("MVA_2017_2018.xlsx", sheet = "MVA_DATA")
@@ -73,45 +73,45 @@ shinyServer(function(input, output){
     #nested if else statements to accomodate month and year time interval inputs
     if (input$year_month==1) {
       if (input$DQ_measure==1) {
-        filter(map_data, usegrp=='Completeness', dqvar==input$complete_var, year==input$year)
+        filter(map_data, usegrp=='Completeness', dqvar==input$complete_var, timeagg=='year')
       } else if (input$DQ_measure==2 & input$time_var=='days_at_80') {
-        filter(map_data, usegrp=='Timeliness', dqvar=='days_at_80', year==input$year)
+        filter(map_data, usegrp=='Timeliness', dqvar=='days_at_80', timeagg=='year')
       } else {
-        filter(map_data, usegrp=='Timeliness', dqvar==input$time_var, year==input$year)
+        filter(map_data, usegrp=='Timeliness', dqvar==input$time_var, timeagg=='year')
       } 
     } else {
       if (input$DQ_measure==1) {
-        filter(map_data, usegrp=='Completeness', dqvar==input$complete_var, year==input$year, month==input$month)
+        filter(map_data, usegrp=='Completeness', dqvar==input$complete_var, timeagg=='month', month==input$month)
       } else if (input$DQ_measure==2 & input$time_var=='days_at_80') {
-        filter(map_data, usegrp=='Timeliness', dqvar=='days_at_80', year==input$year, month==input$month)
+        filter(map_data, usegrp=='Timeliness', dqvar=='days_at_80', timeagg=='month', month==input$month)
       } else {
-        filter(map_data, usegrp=='Timeliness', dqvar==input$time_var, year==input$year, month==input$month)
+        filter(map_data, usegrp=='Timeliness', dqvar==input$time_var, timeagg=='month', month==input$month)
       }
     }
   })
 
   #importing state shapefile and simplifying shape state file to optimize running app
-  states <- states(cb = TRUE)
+  states <- readOGR(dsn = path.expand("shape_file"), layer = "cb_2015_us_state_500k")
   simp_states <- gSimplify(states, tol = 0.05, topologyPreserve = FALSE)
   simp_states <- SpatialPolygonsDataFrame(simp_states, data = states@data)
 
   output$map <- renderLeaflet({
     #merging simplified shape file with subsetted MVA data
-    states_shape_join <- geo_join(simp_states, map_data(), "STUSPS", "Site_State")
+    states_shape_join <- sp::merge(simp_states, map_data(), by.x = "STUSPS", by.y="Site_State", duplicateGeoms=T)
     
     #creating color_set, popups and legend titles based on inputs
     if (input$DQ_measure == 1) {
       color_set <- colorBin("Greens", NULL, bins = c(0, 25, 50, 75, 100))
-      state_popup <- paste0("State:", states_shape_join$Site_State," <br>% Complete:", states_shape_join$measure)
-      legend_title <- "% Completeness"
+      state_popup <- paste0("State: ", states_shape_join$STUSPS," <br>% Complete: ", states_shape_join$measure)
+      legend_title <- "% Completeness: "
     } else if (input$DQ_measure==2 & input$time_var=='days_at_80') {
        color_set <- colorBin("Reds", NULL, bins = c(0, 1, 2, 5, 50))
-       state_popup <- paste0("State:", states_shape_join$Site_State," <br>Ave # days:", states_shape_join$measure)
-       legend_title <- "Ave # days"
+       state_popup <- paste0("State: ", states_shape_join$STUSPS," <br>Ave # days: ", states_shape_join$measure)
+       legend_title <- "Ave # days: "
     } else {
       color_set <- colorBin("Greens", NULL, bins = c(0, 25, 50, 75, 100))
-      state_popup <- paste0("State:", states_shape_join$Site_State," <br>% Received:", states_shape_join$measure)
-      legend_title <- "% Received"
+      state_popup <- paste0("State: ", states_shape_join$STUSPS," <br>% Received: ", states_shape_join$measure)
+      legend_title <- "% Received: "
     }
     
     #creating leaflet map
@@ -119,7 +119,7 @@ shinyServer(function(input, output){
       #adding map styling
       addProviderTiles("CartoDB.Positron") %>% 
       addPolygons(data = states_shape_join,  
-        fillColor = ~color_set(states_shape_join$measure), 
+        fillColor = ~color_set(measure), 
         fillOpacity = 1,
         weight = 1.5, 
         smoothFactor = 0.2, 
